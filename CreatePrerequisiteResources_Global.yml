@@ -1,0 +1,82 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Create prerequisite resources.
+
+Parameters:
+  ConfigBucketName:
+    Type: String
+    Default: <Auto-Generation>
+    Description: Define S3 bucket name for AWS config.
+  ConfigRecorderRoleName:
+    Type: String
+    Default: <Auto-Generation>
+    Description: Define IAM role name for AWS config.
+
+Conditions:
+  GenerateBucketName: !Equals
+    - !Ref ConfigBucketName
+    - <Auto-Generation>
+  GenerateRoleName: !Equals
+    - !Ref ConfigRecorderRoleName
+    - <Auto-Generation>
+
+Resources:
+  ConfigBucket:
+    # DeletionPolicy: Retain
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !If
+        - GenerateBucketName
+        - !Ref AWS::NoValue
+        - !Ref ConfigBucketName
+  ConfigBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ConfigBucket
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Sid: AWSConfigBucketPermissionsCheck
+            Effect: Allow
+            Principal:
+              Service:
+                - config.amazonaws.com
+            Action: s3:GetBucketAcl
+            Resource:
+              - !Sub "arn:aws:s3:::${ConfigBucket}"
+          - Sid: AWSConfigBucketDelivery
+            Effect: Allow
+            Principal:
+              Service:
+                - config.amazonaws.com
+            Action: s3:PutObject
+            Resource:
+              - !Sub "arn:aws:s3:::${ConfigBucket}/AWSLogs/${AWS::AccountId}/*"
+  ConfigRecorderRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - config.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSConfigRole
+      RoleName: !If
+        - GenerateRoleName
+        - !Ref AWS::NoValue
+        - !Ref ConfigRecorderRoleName
+
+Outputs:
+  ConfigBucket:
+    Value: !Ref ConfigBucket
+    Export:
+      Name: ConfigBucket
+  ConfigRecorderRoleArn:
+    Value: !GetAtt ConfigRecorderRole.Arn
+    Export:
+      Name: ConfigRecorderRoleArn

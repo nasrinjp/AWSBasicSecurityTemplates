@@ -1,0 +1,1 @@
+# AWSBasicSecurityTemplates

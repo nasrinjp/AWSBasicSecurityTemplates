@@ -1,0 +1,223 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Enable AWS Config
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Recorder Configuration
+        Parameters:
+          - AllSupported
+          - IncludeGlobalResourceTypes
+          - ResourceTypes
+      - Label:
+          default: Delivery Channel Configuration
+        Parameters:
+          - DeliveryChannelName
+          - Frequency
+          - ConfigRecorderRoleArn
+          - ConfigBucketName
+      - Label:
+          default: Delivery Notifications
+        Parameters:
+          - UseTopic
+          - TopicArn
+          - NotificationEmail
+    ParameterLabels:
+      AllSupported:
+        default: Support all resource types
+      IncludeGlobalResourceTypes:
+        default: Include global resource types
+      ResourceTypes:
+        default: List of resource types if not all supported
+      DeliveryChannelName:
+        default: Configuration delivery channel name
+      Frequency:
+        default: Snapshot delivery frequency
+      TopicArn:
+        default: SNS topic name
+      NotificationEmail:
+        default: Notification Email (optional)
+
+Parameters:
+  AllSupported:
+    Type: String
+    Default: True
+    Description: Indicates whether to record all supported resource types.
+    AllowedValues:
+      - True
+      - False
+
+  IncludeGlobalResourceTypes:
+    Type: String
+    Default: True
+    Description: Indicates whether AWS Config records all supported global resource types.
+    AllowedValues:
+      - True
+      - False
+
+  ResourceTypes:
+    Type: List<String>
+    Description: A list of valid AWS resource types to include in this recording group, such as AWS::EC2::Instance or AWS::CloudTrail::Trail.
+    Default: <All>
+
+  DeliveryChannelName:
+    Type: String
+    Default: <Generated>
+    Description: The name of the delivery channel.
+
+  Frequency:
+    Type: String
+    Default: 24hours
+    Description: The frequency with which AWS Config delivers configuration snapshots.
+    AllowedValues:
+      - 1hour
+      - 3hours
+      - 6hours
+      - 12hours
+      - 24hours
+
+  # Added by Nasu
+  ConfigRecorderRoleArn:
+    Type: String
+    Description: The arn of AWS config recorder role.
+
+  # Added by Nasu
+  ConfigBucketName:
+    Type: String
+    Description: The name of S3 bucket for AWS config.
+
+  # Added by Nasu
+  UseTopic:
+    Type: String
+    Default: False
+    Description: Indicates whether SNS Topic is used.
+    AllowedValues:
+      - True
+      - False
+
+  TopicArn:
+    Type: String
+    Default: <New Topic>
+    Description: The Amazon Resource Name (ARN) of the Amazon Simple Notification Service (Amazon SNS) topic that AWS Config delivers notifications to.
+
+  NotificationEmail:
+    Type: String
+    Default: <None>
+    Description: Email address for AWS Config notifications (for new topics).
+
+Conditions:
+  IsAllSupported: !Equals
+    - !Ref AllSupported
+    - True
+  IsGeneratedDeliveryChannelName: !Equals
+    - !Ref DeliveryChannelName
+    - <Generated>
+  UseTopic: !Equals
+    - !Ref UseTopic
+    - True
+  CreateTopic: !And
+    - !Equals
+      - !Ref TopicArn
+      - <New Topic>
+    - !Condition UseTopic
+  # CreateTopic: !Equals
+  #   - !Ref TopicArn
+  #   - <New Topic>
+  UseExistTopic: !And
+    - !Not
+      - !Equals
+        - !Ref TopicArn
+        - <New Topic>
+    - !Condition UseTopic
+  CreateSubscription: !And
+    - !Condition CreateTopic
+    - !Not
+      - !Equals
+        - !Ref NotificationEmail
+        - <None>
+
+Mappings:
+  Settings:
+    FrequencyMap:
+      1hour: One_Hour
+      3hours: Three_Hours
+      6hours: Six_Hours
+      12hours: Twelve_Hours
+      24hours: TwentyFour_Hours
+
+Resources:
+  ConfigTopic:
+    Condition: CreateTopic
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "config-topic-${AWS::AccountId}"
+      DisplayName: AWS Config Notification Topic
+
+  ConfigTopicPolicy:
+    Condition: CreateTopic
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics:
+        - !Ref ConfigTopic
+      PolicyDocument:
+        Statement:
+          - Sid: AWSConfigSNSPolicy
+            Action:
+              - sns:Publish
+            Effect: Allow
+            Resource: !Ref ConfigTopic
+            Principal:
+              Service:
+                - config.amazonaws.com
+
+  EmailNotification:
+    Condition: CreateSubscription
+    Type: AWS::SNS::Subscription
+    Properties:
+      Endpoint: !Ref NotificationEmail
+      Protocol: email
+      TopicArn: !Ref ConfigTopic
+
+  ConfigRecorder:
+    Type: AWS::Config::ConfigurationRecorder
+    # DependsOn:
+    #   - ConfigBucketPolicy
+    #   - ConfigTopicPolicy
+    Properties:
+      RoleARN: !Ref ConfigRecorderRoleArn
+      RecordingGroup:
+        AllSupported: !Ref AllSupported
+        IncludeGlobalResourceTypes: !Ref IncludeGlobalResourceTypes
+        ResourceTypes: !If
+          - IsAllSupported
+          - !Ref AWS::NoValue
+          - !Ref ResourceTypes
+
+  ConfigDeliveryChannel:
+    Type: AWS::Config::DeliveryChannel
+    # DependsOn:
+    #   - ConfigBucketPolicy
+    #   - ConfigTopicPolicy
+    Properties:
+      Name: !If
+        - IsGeneratedDeliveryChannelName
+        - !Ref AWS::NoValue
+        - !Ref DeliveryChannelName
+      ConfigSnapshotDeliveryProperties:
+        DeliveryFrequency: !FindInMap
+          - Settings
+          - FrequencyMap
+          - !Ref Frequency
+      S3BucketName: !Ref ConfigBucketName
+      SnsTopicARN: !If
+        - CreateTopic
+        - !Ref ConfigTopic
+        - !If
+          - UseExistTopic
+          - !Ref TopicArn
+          - !Ref AWS::NoValue
+      # SnsTopicARN: !If
+      #   - CreateTopic
+      #   - !Ref ConfigTopic
+      #   - !Ref TopicArn

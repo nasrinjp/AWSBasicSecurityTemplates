@@ -1,0 +1,40 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Enable the necessary bare minimum of AWS security services.
+
+Parameters:
+  GuardDutyPublishFrequency:
+    Type: String
+    Default: 6hours
+    Description: The frequency with which GuardDuty publishes results.
+    AllowedValues:
+      - 15min
+      - 1hour
+      - 6hours
+  IAMAccessAnalyzerName:
+    Type: String
+    Description: The name of the IAM Access Analyzer.
+    Default: ConsoleAnalyzer
+
+Mappings:
+  Settings:
+    GuardDutyMap:
+      15min: FIFTEEN_MINUTES
+      1hour: ONE_HOUR
+      6hours: SIX_HOURS
+
+Resources:
+  GuardDutyDetector:
+    Type: AWS::GuardDuty::Detector
+    Properties:
+      Enable: true
+      FindingPublishingFrequency: !FindInMap
+        - Settings
+        - GuardDutyMap
+        - !Ref GuardDutyPublishFrequency
+  SecurityHub:
+    Type: AWS::SecurityHub::Hub
+  IAMAccessAnalyzer:
+    Type: AWS::AccessAnalyzer::Analyzer
+    Properties:
+      AnalyzerName: !Sub "${IAMAccessAnalyzerName}-${AWS::Region}"
+      Type: ACCOUNT
